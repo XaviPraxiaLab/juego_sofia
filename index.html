@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Jardín de estrellas</title>
+<title>Jardín de letras</title>
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #cfe8f3; font-family: "Comic Sans MS", "Chalkboard SE", system-ui, sans-serif; }
   canvas { display: block; touch-action: none; user-select: none; }
@@ -17,12 +17,23 @@ const PLAYERS = [
   { name: 'Papá',  emoji: '🐻', keys: { left: 'KeyA', right: 'KeyD' }, labels: ['A', 'D'], color: '#7fb7d9', basket: 120, speed: 380 },
   { name: 'Sofía', emoji: '🐰', keys: { left: 'ArrowLeft', right: 'ArrowRight' }, labels: ['←', '→'], color: '#f2a7c3', basket: 150, speed: 380 },
 ];
-const STARS_PER_FLOWER = 10;
-const FALL_SPEED = 75;           // px/s, lento
-const SPAWN_EVERY = [2.6, 3.6];  // segundos entre estrellas en cada lado
+// Las cuatro primeras van en este orden; después siguen palabras sencillas
+const WORDS = ['SOFIA', 'XAVI', 'MARINA', 'PAULA', 'SOL', 'OSO', 'LUNA', 'CASA', 'MAR', 'GATO', 'PATO', 'FLOR', 'NUBE', 'MESA', 'PELOTA', 'PERRO'];
+const SAY = { SOFIA: 'Sofía' };   // cómo se pronuncia en voz alta, si es distinto
+const FALL_SPEED = 70;            // px/s, lento
+const SPAWN_EVERY = [1.6, 2.2];   // segundos entre letras
+const MAX_LETTERS = 5;
 const GARDEN = ['🌷', '🌼', '🦋', '🌻', '🐞', '🍄', '🐝', '🌸', '🐌', '🐦', '🌺', '🦔', '🐸', '🐿️', '🌹', '🐛'];
-const SPECIAL = ['🦄', '🦊', '🐢', '🦉', '🐼', '🦒'];
-const SCALE = [523.25, 587.33, 659.25, 783.99, 880, 1046.5, 880, 783.99, 659.25, 587.33]; // pentatónica suave
+// Fondos suaves que van cambiando con cada palabra
+const THEMES = [
+  { top: '#bfe0f0', bottom: '#f3f7e8', grass: '#b7dca0' },  // mañana
+  { top: '#f6c9b8', bottom: '#fdf0d8', grass: '#c3d99a' },  // atardecer
+  { top: '#d7c8ef', bottom: '#f4eefb', grass: '#b5d6b2' },  // lila
+  { top: '#a9d8d0', bottom: '#eef8f1', grass: '#9fd0a5' },  // mar
+  { top: '#8e9cc9', bottom: '#d9ddf0', grass: '#93b89a' },  // noche suave
+  { top: '#f9e3a3', bottom: '#fff9e6', grass: '#bcd98e' },  // sol
+];
+const SCALE = [523.25, 587.33, 659.25, 783.99, 880, 1046.5];
 
 const cv = document.getElementById('c');
 const ctx = cv.getContext('2d');
@@ -30,7 +41,7 @@ let W, H;
 function resize() { W = cv.width = innerWidth; H = cv.height = innerHeight; }
 addEventListener('resize', resize); resize();
 
-// ---------- Sonido suave ----------
+// ---------- Sonido suave y voz ----------
 let ac;
 function startAudio() { if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch {} } }
 function tone(freq, dur = 0.5, vol = 0.12, when = 0) {
@@ -41,36 +52,49 @@ function tone(freq, dur = 0.5, vol = 0.12, when = 0) {
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   o.connect(g).connect(ac.destination); o.start(t); o.stop(t + dur);
 }
-let note = 0;
 const sfx = {
-  catch: () => tone(SCALE[note++ % SCALE.length]),
-  bloom: () => [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone(f, 0.8, 0.1, i * 0.18)),
-  friend: () => [659.25, 783.99, 987.77, 1318.5].forEach((f, i) => tone(f, 0.9, 0.1, i * 0.15)),
+  good: i => tone(SCALE[i % SCALE.length]),
+  other: () => tone(330, 0.25, 0.05),
+  word: () => [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone(f, 0.8, 0.1, i * 0.18)),
 };
+function speak(s) {
+  try {
+    const u = new SpeechSynthesisUtterance(s);
+    u.lang = 'es-ES'; u.rate = 0.8; u.pitch = 1.1;
+    speechSynthesis.cancel(); speechSynthesis.speak(u);
+  } catch {}
+}
 
 // ---------- Estado ----------
 const keys = {};
 let state = 'menu'; // menu | play | pause
-let total, jar, items, particles, flyers, garden, messages;
+let wordIdx, filled, items, particles, flyers, garden, messages, spawnT, celebrate, theme, themeFrom, themeMix;
 
 function reset() {
-  total = 0; jar = 0; items = []; particles = []; flyers = []; garden = []; messages = [];
-  PLAYERS.forEach((p, i) => {
-    p.x = laneX(i) + laneW() / 2; p.spawn = 1 + i * 1.2; p.bounce = 0; p.waiting = false;
-  });
-  friendTimer = 30;
+  wordIdx = 0; filled = 0; items = []; particles = []; flyers = []; garden = []; messages = [];
+  spawnT = 0.5; celebrate = 0; theme = 0; themeFrom = 0; themeMix = 1;
+  PLAYERS.forEach((p, i) => { p.x = W * (i ? 0.7 : 0.3); p.bounce = 0; });
 }
-let friendTimer = 30;
-const laneW = () => W / 2;
-const laneX = i => i * W / 2;
+const word = () => WORDS[wordIdx % WORDS.length];
+const needed = () => word()[filled + flyers.length] || null;
 const groundY = () => H - 80;
-const jarPos = () => ({ x: W / 2, y: 42 });
 const rand = (a, b) => a + Math.random() * (b - a);
+const slotPos = k => {
+  const n = word().length, size = Math.min(70, (W - 40) / n - 10);
+  return { x: W / 2 + (k - (n - 1) / 2) * (size + 12), y: 60, size };
+};
 
-// ---------- Objetos ----------
-function spawn(i, kind = 'star') {
-  const m = 50;
-  items.push({ lane: i, kind, x0: laneX(i) + m + Math.random() * (laneW() - 2 * m), y: -40, t: Math.random() * 6, vy: FALL_SPEED * rand(0.9, 1.1), fade: 1 });
+// ---------- Letras ----------
+function spawn() {
+  if (items.filter(it => !it.landed).length >= MAX_LETTERS) return;
+  const need = needed();
+  const needOnScreen = items.some(it => !it.landed && it.letter === need);
+  let letter;
+  if (need && !needOnScreen && Math.random() < 0.75) letter = need;
+  else if (Math.random() < 0.7) letter = word()[Math.floor(Math.random() * word().length)];
+  else letter = 'ABCDEFGHIJLMNOPRSTUV'[Math.floor(Math.random() * 20)];
+  const m = 60;
+  items.push({ letter, x0: m + Math.random() * (W - 2 * m), y: -40, t: Math.random() * 6, vy: FALL_SPEED * rand(0.9, 1.1), fade: 1, hue: Math.floor(Math.random() * 5) });
 }
 function sparkle(x, y, color, n = 6) {
   for (let k = 0; k < n; k++) {
@@ -78,20 +102,27 @@ function sparkle(x, y, color, n = 6) {
     particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 1, color, size: rand(2, 4) });
   }
 }
-function say(text) { messages.push({ text, life: 3.5 }); }
+function say(text) { messages = [{ text, life: 3.5 }]; }
 
-function addToJar(n) {
-  jar += n; total += n;
-  while (jar >= STARS_PER_FLOWER) { jar -= STARS_PER_FLOWER; grow(GARDEN[garden.filter(g => !g.big).length % GARDEN.length]); }
-}
-function grow(emoji, big = false) {
-  // posiciones repartidas por todo el prado, sin tapar las teclas
+function grow(emoji) {
   const n = garden.length;
   let k = n, x;
   do { x = 50 + ((k++ * 0.618) % 1) * (W - 100); } while ([W / 4, 3 * W / 4].some(c => Math.abs(x - c) < 90));
-  garden.push({ emoji, x, y: groundY() + 30 + (n % 3) * 8, s: 0, big });
-  sfx.bloom();
-  const p = jarPos(); sparkle(p.x, p.y, '#ffe082', 10);
+  garden.push({ emoji, x, y: groundY() + 30 + (n % 3) * 8, s: 0 });
+}
+
+function wordDone() {
+  const w = word();
+  sfx.word(); speak(SAY[w] || w.toLowerCase());
+  say('¡' + w + '!');
+  celebrate = 3;
+  for (let k = 0; k < w.length; k++) { const s = slotPos(k); sparkle(s.x, s.y, '#ffe082', 6); }
+  grow(GARDEN[garden.length % GARDEN.length]);
+}
+function nextWord() {
+  wordIdx++; filled = 0;
+  themeFrom = theme; theme = (theme + 1) % THEMES.length; themeMix = 0;
+  items.forEach(it => { it.landed = true; }); // las letras de la palabra anterior se apagan
 }
 
 // ---------- Bucle ----------
@@ -104,116 +135,99 @@ function loop(now) {
 }
 
 function update(dt) {
-  PLAYERS.forEach((p, i) => {
+  PLAYERS.forEach(p => {
     p.bounce = Math.max(0, p.bounce - dt * 3);
     const dir = (keys[p.keys.right] ? 1 : 0) - (keys[p.keys.left] ? 1 : 0);
     p.x += dir * p.speed * dt;
-    const half = p.basket / 2;
-    p.x = Math.max(laneX(i) + half, Math.min(laneX(i) + laneW() - half, p.x));
-    p.spawn -= dt;
-    if (p.spawn <= 0) { spawn(i); p.spawn = rand(...SPAWN_EVERY); }
+    p.x = Math.max(p.basket / 2, Math.min(W - p.basket / 2, p.x)); // toda la pantalla, os podéis cruzar
   });
 
-  friendTimer -= dt;
-  if (friendTimer <= 0 && !items.some(it => it.kind === 'heart')) {
-    spawn(0, 'heart'); spawn(1, 'heart'); friendTimer = rand(35, 50);
+  themeMix = Math.min(1, themeMix + dt / 3);
+
+  if (celebrate > 0) {
+    celebrate -= dt;
+    if (celebrate <= 0) nextWord();
+  } else {
+    spawnT -= dt;
+    if (spawnT <= 0) { spawn(); spawnT = rand(...SPAWN_EVERY); }
   }
 
   const gy = groundY();
   for (let k = items.length - 1; k >= 0; k--) {
     const it = items[k];
     it.t += dt;
-    it.x = it.x0 + Math.sin(it.t * 1.3) * 18;
+    it.x = it.x0 + Math.sin(it.t * 1.2) * 16;
     if (it.landed) {
-      it.fade -= dt * 0.6;
-      if (it.fade <= 0) { items.splice(k, 1); if (it.kind === 'heart') heartGone(it.lane); }
+      it.fade -= dt * 0.7;
+      if (it.fade <= 0) items.splice(k, 1);
       continue;
     }
     it.y += it.vy * dt;
-    const p = PLAYERS[it.lane];
-    if (it.y > gy - 45 && it.y < gy && Math.abs(it.x - p.x) < p.basket / 2 + 12) {
-      items.splice(k, 1); onCatch(it, p); continue;
-    }
-    if (it.y >= gy + 6) { it.y = gy + 6; it.landed = true; } // se posa en la hierba y se apaga despacio
+    const p = PLAYERS.find(p => it.y > gy - 45 && it.y < gy && Math.abs(it.x - p.x) < p.basket / 2 + 12);
+    if (p) { items.splice(k, 1); onCatch(it, p); continue; }
+    if (it.y >= gy + 6) { it.y = gy + 6; it.landed = true; }
   }
 
   for (let k = flyers.length - 1; k >= 0; k--) {
     const f = flyers[k]; f.t += dt / 0.9;
-    if (f.t >= 1) { flyers.splice(k, 1); addToJar(f.n); }
+    if (f.t >= 1) {
+      flyers.splice(k, 1); filled++;
+      const s = slotPos(f.slot); sparkle(s.x, s.y, '#fff3b0');
+      if (filled === word().length) wordDone();
+    }
   }
   garden.forEach(g => { g.s = Math.min(1, g.s + dt * 0.8); });
   for (let k = particles.length - 1; k >= 0; k--) {
     const q = particles[k]; q.x += q.vx * dt; q.y += q.vy * dt; q.vx *= 0.96; q.vy *= 0.96; q.life -= dt * 0.9;
     if (q.life <= 0) particles.splice(k, 1);
   }
-  for (let k = messages.length - 1; k >= 0; k--) { messages[k].life -= dt; if (messages[k].life <= 0) messages.splice(k, 1); }
+  messages.forEach(m => { m.life -= dt; });
+  messages = messages.filter(m => m.life > 0);
 }
 
 function onCatch(it, p) {
   p.bounce = 1;
-  if (it.kind === 'star') {
-    sfx.catch(); sparkle(it.x, it.y, '#fff3b0');
-    flyers.push({ x: it.x, y: it.y, t: 0, n: 1 });
-    return;
-  }
-  // corazón: hace falta que lo cojáis los dos
-  sparkle(it.x, it.y, '#f8bbd0', 8); sfx.catch();
-  const other = PLAYERS[1 - PLAYERS.indexOf(p)];
-  if (other.waiting) {
-    other.waiting = false;
-    sfx.friend();
-    grow(SPECIAL[garden.filter(g => g.big).length % SPECIAL.length], true);
-    say('¡Lo habéis conseguido juntos! 💖');
+  const slot = filled + flyers.length;
+  if (it.letter === word()[slot]) {
+    sfx.good(slot); sparkle(it.x, it.y, '#fff3b0');
+    flyers.push({ x: it.x, y: it.y, t: 0, slot, letter: it.letter, hue: it.hue });
   } else {
-    p.waiting = true;
-    say('¡Ahora ' + other.name + '! 💖');
+    // otra letra: no pasa nada, solo se deshace en burbujas
+    sfx.other(); sparkle(it.x, it.y, '#ffffff', 5);
   }
-}
-function heartGone(lane) {
-  // si el otro corazón se pierde, simplemente se olvida; sin castigo
-  PLAYERS[1 - lane].waiting = false;
 }
 
 // ---------- Dibujo ----------
-function starPath(x, y, r) {
-  ctx.beginPath();
-  for (let k = 0; k < 10; k++) {
-    const a = k * Math.PI / 5 - Math.PI / 2, rr = k % 2 ? r * 0.5 : r;
-    ctx.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr);
-  }
-  ctx.closePath();
-}
-function drawStar(x, y, r, alpha = 1) {
+const BUBBLES = ['#ffd6a5', '#caffbf', '#9bf6ff', '#bdb2ff', '#ffc6ff'];
+function drawLetter(letter, x, y, r, hue, alpha = 1, glow = false) {
   ctx.save(); ctx.globalAlpha = alpha;
-  starPath(x, y, r);
-  ctx.fillStyle = '#ffe58a'; ctx.fill();
-  ctx.lineJoin = 'round'; ctx.lineWidth = 3; ctx.strokeStyle = '#e8b64c'; ctx.stroke();
-  ctx.fillStyle = '#6d5040';
-  ctx.beginPath(); ctx.arc(x - r * 0.25, y - r * 0.05, r * 0.09, 0, 7); ctx.arc(x + r * 0.25, y - r * 0.05, r * 0.09, 0, 7); ctx.fill();
-  ctx.lineWidth = 2; ctx.strokeStyle = '#6d5040';
-  ctx.beginPath(); ctx.arc(x, y + r * 0.08, r * 0.2, 0.3, Math.PI - 0.3); ctx.stroke();
-  ctx.restore();
-}
-function drawHeart(x, y, alpha = 1) {
-  ctx.save(); ctx.globalAlpha = alpha; ctx.translate(x, y);
-  ctx.fillStyle = '#f48fb1';
-  ctx.beginPath(); ctx.moveTo(0, 14);
-  ctx.bezierCurveTo(-34, -8, -16, -32, 0, -14); ctx.bezierCurveTo(16, -32, 34, -8, 0, 14); ctx.fill();
+  if (glow) { ctx.shadowColor = '#fff59d'; ctx.shadowBlur = 25; }
+  ctx.fillStyle = BUBBLES[hue % BUBBLES.length];
+  ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.beginPath(); ctx.arc(x - r * 0.4, y - r * 0.4, r * 0.15, 0, 7); ctx.fill();
+  ctx.fillStyle = '#4a3b5c';
+  ctx.font = `bold ${Math.round(r * 1.2)}px "Comic Sans MS", "Chalkboard SE", sans-serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(letter, x, y + r * 0.06);
   ctx.restore();
 }
 
-function drawPlayer(p, t) {
+function drawPlayer(p) {
   const gy = groundY();
   const squash = 1 + p.bounce * 0.08;
   ctx.save(); ctx.translate(p.x, gy);
+  ctx.globalAlpha = 0.92;
   ctx.fillStyle = p.color; ctx.strokeStyle = '#8d6e63'; ctx.lineWidth = 3; ctx.lineJoin = 'round';
   const bw = p.basket;
   ctx.beginPath(); ctx.moveTo(-bw / 2, -30); ctx.lineTo(bw / 2, -30); ctx.lineTo(bw / 2 - 14, 8); ctx.lineTo(-bw / 2 + 14, 8); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.globalAlpha = 1;
   ctx.scale(1 / squash, squash);
   ctx.font = '60px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
   ctx.fillText(p.emoji, 0, -22);
   ctx.restore();
-  if (p.waiting) { drawHeart(p.x, gy - 110 + Math.sin(t * 2) * 4, 0.9); }
 }
 
 function roundRect(x, y, w, h, r) {
@@ -228,7 +242,7 @@ function text(s, x, y, size, color = '#5b4a6b', align = 'center') {
 
 function drawKeyHint(i) {
   const p = PLAYERS[i];
-  const cx = laneX(i) + laneW() / 2, y = H - 30;
+  const cx = W * (i ? 0.75 : 0.25), y = H - 30;
   ctx.font = 'bold 22px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   [-1, 1].forEach((d, k) => {
     const bx = cx + d * 34;
@@ -238,69 +252,80 @@ function drawKeyHint(i) {
   });
 }
 
-function drawJar() {
-  const { x, y } = jarPos();
-  const w = Math.min(320, W * 0.5);
-  ctx.fillStyle = 'rgba(255,255,255,0.6)'; roundRect(x - w / 2, y - 16, w, 32, 16); ctx.fill();
-  ctx.fillStyle = '#ffe58a'; roundRect(x - w / 2, y - 16, Math.max(32, w * jar / STARS_PER_FLOWER), 32, 16); ctx.fill();
-  text(jar + ' / ' + STARS_PER_FLOWER + '  ⭐', x, y + 1, 20);
-  text('🌼 ' + garden.length, W - 20, y, 26, '#5b4a6b', 'right');
-  text('⭐ ' + total, 20, y, 26, '#5b4a6b', 'left');
+function drawWord(t) {
+  const w = word();
+  for (let k = 0; k < w.length; k++) {
+    const { x, y, size } = slotPos(k);
+    const isNext = k === filled + flyers.length && celebrate <= 0;
+    ctx.fillStyle = isNext ? `rgba(255,255,255,${0.75 + Math.sin(t * 3) * 0.2})` : 'rgba(255,255,255,0.55)';
+    roundRect(x - size / 2, y - size / 2, size, size, 14); ctx.fill();
+    if (isNext) { ctx.lineWidth = 4; ctx.strokeStyle = '#f2b84b'; ctx.stroke(); }
+    const done = k < filled;
+    const lift = celebrate > 0 ? Math.sin(t * 6 + k * 0.7) * 6 : 0;
+    // la letra se ve en gris clarito como pista, y en color cuando ya la habéis cogido
+    text(w[k], x, y + 2 + lift, size * 0.7, done ? '#d16a93' : 'rgba(91,74,107,0.25)');
+  }
+}
+
+function lerpColor(a, b, m) {
+  const pa = [1, 3, 5].map(i => parseInt(a.slice(i, i + 2), 16)), pb = [1, 3, 5].map(i => parseInt(b.slice(i, i + 2), 16));
+  return 'rgb(' + pa.map((v, i) => Math.round(v + (pb[i] - v) * m)).join(',') + ')';
 }
 
 function draw(t) {
+  const A = THEMES[themeFrom || 0], B = THEMES[theme || 0], m = themeMix ?? 1;
   const g = ctx.createLinearGradient(0, 0, 0, H);
-  g.addColorStop(0, '#bfe0f0'); g.addColorStop(1, '#f3f7e8');
+  g.addColorStop(0, lerpColor(A.top, B.top, m)); g.addColorStop(1, lerpColor(A.bottom, B.bottom, m));
   ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
 
   // nubes de fondo, muy lentas
-  ctx.fillStyle = 'rgba(255,255,255,0.7)';
-  [[0.15, 0.22, 1], [0.6, 0.15, 0.8], [0.85, 0.3, 1.1]].forEach(([fx, fy, s], k) => {
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  [[0.15, 0.3, 1], [0.6, 0.22, 0.8], [0.85, 0.4, 1.1]].forEach(([fx, fy, s], k) => {
     const x = ((fx * W + t * (6 + k * 2)) % (W + 200)) - 100, y = fy * H;
     [[-30, 0, 26], [0, -12, 32], [30, 0, 24]].forEach(([dx, dy, r]) => { ctx.beginPath(); ctx.arc(x + dx * s, y + dy * s, r * s, 0, 7); ctx.fill(); });
   });
 
   // prado
   const gy = groundY();
-  ctx.fillStyle = '#b7dca0';
+  ctx.fillStyle = lerpColor(A.grass, B.grass, m);
   ctx.beginPath(); ctx.moveTo(0, gy + 10);
   for (let x = 0; x <= W; x += 20) ctx.lineTo(x, gy + 10 + Math.sin(x / 120) * 6);
   ctx.lineTo(W, H); ctx.lineTo(0, H); ctx.closePath(); ctx.fill();
-  ctx.setLineDash([10, 14]); ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 3;
-  ctx.beginPath(); ctx.moveTo(W / 2, 80); ctx.lineTo(W / 2, gy); ctx.stroke(); ctx.setLineDash([]);
 
   if (state !== 'menu') {
     ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
     garden.forEach(gd => {
-      const size = (gd.big ? 44 : 30) * gd.s;
+      const size = 30 * gd.s;
       if (size < 1) return;
       ctx.font = size + 'px serif';
       ctx.fillText(gd.emoji, gd.x, gd.y + Math.sin(t * 1.5 + gd.x) * 1.5);
     });
-    items.forEach(it => it.kind === 'star' ? drawStar(it.x, it.y, 24, it.fade) : drawHeart(it.x, it.y, it.fade));
-    PLAYERS.forEach(p => drawPlayer(p, t));
+    const need = needed();
+    items.forEach(it => drawLetter(it.letter, it.x, it.y, 30, it.hue, it.fade, !it.landed && it.letter === need));
+    PLAYERS.forEach(drawPlayer);
+    drawWord(t);
     flyers.forEach(f => {
-      const j = jarPos(), e = 1 - Math.pow(1 - f.t, 3);
-      drawStar(f.x + (j.x - f.x) * e, f.y + (j.y - f.y) * e - Math.sin(e * Math.PI) * 60, 24 - e * 10);
+      const s = slotPos(f.slot), e = 1 - Math.pow(1 - f.t, 3);
+      drawLetter(f.letter, f.x + (s.x - f.x) * e, f.y + (s.y - f.y) * e - Math.sin(e * Math.PI) * 60, 30 - e * 6, f.hue);
     });
     particles.forEach(q => { ctx.globalAlpha = Math.max(0, q.life); ctx.fillStyle = q.color; ctx.beginPath(); ctx.arc(q.x, q.y, q.size, 0, 7); ctx.fill(); });
     ctx.globalAlpha = 1;
-    drawJar();
-    messages.slice(-1).forEach(m => { ctx.globalAlpha = Math.min(1, m.life); text(m.text, W / 2, H * 0.3, 34, '#d16a93'); ctx.globalAlpha = 1; });
+    text('🌼 ' + garden.length, 20, 40, 26, '#5b4a6b', 'left');
+    messages.forEach(mm => { ctx.globalAlpha = Math.min(1, mm.life); text(mm.text, W / 2, H * 0.32, 56, '#d16a93'); ctx.globalAlpha = 1; });
   }
 
   PLAYERS.forEach((p, i) => drawKeyHint(i));
 
   if (state === 'menu') {
-    text('Jardín de estrellas', W / 2, H * 0.2, Math.min(64, W / 12), '#e0a32e');
+    text('Jardín de letras', W / 2, H * 0.2, Math.min(64, W / 12), '#e0a32e');
     PLAYERS.forEach((p, i) => {
-      const cx = laneX(i) + laneW() / 2;
+      const cx = W * (i ? 0.75 : 0.25);
       ctx.font = '84px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(p.emoji, cx, H * 0.42);
       text(p.name, cx, H * 0.54, 36, p.color);
       text(p.labels.join('  '), cx, H * 0.62, 30);
     });
-    text('Atrapad estrellas juntos y haced crecer el jardín 🌷', W / 2, H * 0.72, Math.min(26, W / 30));
+    text('Atrapad las letras en orden y formad palabras', W / 2, H * 0.72, Math.min(26, W / 30));
     text('Pulsa ESPACIO o toca para empezar', W / 2, H * 0.8, Math.min(30, W / 26), '#5b4a6b');
   }
   if (state === 'pause') text('Pausa · ESPACIO para seguir', W / 2, H / 2, 40);
@@ -325,7 +350,7 @@ const pointers = new Map();
 function buttonAt(x, y) {
   if (y < H - 80) return null;
   for (let i = 0; i < PLAYERS.length; i++) {
-    const cx = laneX(i) + laneW() / 2;
+    const cx = W * (i ? 0.75 : 0.25);
     if (Math.abs(x - (cx - 34)) < 34) return PLAYERS[i].keys.left;
     if (Math.abs(x - (cx + 34)) < 34) return PLAYERS[i].keys.right;
   }
