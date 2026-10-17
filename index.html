@@ -6,7 +6,7 @@
 <title>Lluvia de estrellas</title>
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #1b1b3a; font-family: "Comic Sans MS", "Chalkboard SE", system-ui, sans-serif; }
-  canvas { display: block; }
+  canvas { display: block; touch-action: none; user-select: none; }
 </style>
 </head>
 <body>
@@ -357,7 +357,7 @@ function draw(t) {
       text(p.labels.join('  '), cx, H * 0.66, 34);
     });
     text('Atrapad estrellas ⭐   ¡Cuidado con las nubes!', W / 2, H * 0.76, Math.min(30, W / 28));
-    if (Math.floor(t * 2) % 2) text('Pulsa ESPACIO para empezar', W / 2, H * 0.85, Math.min(36, W / 22), '#fff');
+    if (Math.floor(t * 2) % 2) text('Pulsa ESPACIO o toca para empezar', W / 2, H * 0.85, Math.min(36, W / 22), '#fff');
     if (record) text('Récord: ' + record, W / 2, H * 0.92 - 40, 24, '#ffeb3b');
   }
   if (state === 'pause') text('Pausa (ESPACIO para seguir)', W / 2, H / 2, 48);
@@ -366,7 +366,7 @@ function draw(t) {
     text('¡Muy bien, equipo!', W / 2, H * 0.3, 64, '#ffd740');
     text('⭐ ' + score + '   ·   Nivel ' + level, W / 2, H * 0.45, 48);
     text(score >= record ? '¡Nuevo récord!' : 'Récord: ' + record, W / 2, H * 0.55, 36, '#ff80ab');
-    if (Math.floor(t * 2) % 2) text('ESPACIO para jugar otra vez', W / 2, H * 0.7, 36);
+    if (Math.floor(t * 2) % 2) text('ESPACIO o toca para jugar otra vez', W / 2, H * 0.7, 36);
   }
 }
 
@@ -375,7 +375,7 @@ const gameKeys = new Set(['Space', ...PLAYERS.flatMap(p => [p.keys.left, p.keys.
 addEventListener('keydown', e => {
   if (gameKeys.has(e.code)) e.preventDefault();
   keys[e.code] = true;
-  if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch {} }
+  startAudio();
   if (e.code === 'Space' && !e.repeat) {
     if (state === 'menu' || state === 'over') { reset(); state = 'play'; }
     else if (state === 'play') state = 'pause';
@@ -383,6 +383,31 @@ addEventListener('keydown', e => {
   }
 });
 addEventListener('keyup', e => { keys[e.code] = false; });
+
+// ---------- Táctil / ratón: los botones de abajo también funcionan ----------
+const pointers = new Map();
+function buttonAt(x, y) {
+  if (y < H - 80) return null;
+  for (let i = 0; i < PLAYERS.length; i++) {
+    const cx = laneX(i) + laneW() / 2;
+    if (Math.abs(x - (cx - 34)) < 34) return PLAYERS[i].keys.left;
+    if (Math.abs(x - (cx + 34)) < 34) return PLAYERS[i].keys.right;
+  }
+  return null;
+}
+function syncPointerKeys() {
+  PLAYERS.forEach(p => { keys[p.keys.left] = keys[p.keys.right] = false; });
+  pointers.forEach(k => { if (k) keys[k] = true; });
+}
+function startAudio() { if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch {} } }
+cv.addEventListener('pointerdown', e => {
+  e.preventDefault(); startAudio(); window.focus();
+  if (state === 'menu' || state === 'over') { reset(); state = 'play'; return; }
+  if (state === 'pause') { state = 'play'; last = performance.now(); }
+  pointers.set(e.pointerId, buttonAt(e.clientX, e.clientY)); syncPointerKeys();
+});
+cv.addEventListener('pointermove', e => { if (pointers.has(e.pointerId)) { pointers.set(e.pointerId, buttonAt(e.clientX, e.clientY)); syncPointerKeys(); } });
+['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => cv.addEventListener(ev, e => { pointers.delete(e.pointerId); syncPointerKeys(); }));
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; if (state === 'play') state = 'pause'; });
 
 reset();
