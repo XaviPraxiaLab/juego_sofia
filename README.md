@@ -1,11 +1,14 @@
-# Jardín de letras
+# Cielo de estrellas
 
-Juego cooperativo y tranquilo para formar palabras, para dos jugadores en el mismo teclado (o tocando los botones de la pantalla). Abre `index.html` en el navegador.
+Juego cooperativo y tranquilo para dos jugadores en el mismo teclado (o tocando los botones de la pantalla). Abre `index.html` en el navegador.
 
-- **Papá** (🐻): `A` y `D`
-- **Sofía** (🐰): `←` y `→`
+- **Papá** (🐻, corazón azul): `A` y `D`
+- **Sofía** (🐰, corazón rosa): `←` y `→`
 - `ESPACIO`: empezar / pausa
 
-Arriba aparece una palabra en mayúsculas con las letras en gris como pista. Caen burbujas con letras y hay que atraparlas en orden; la que toca brilla un poco. Los dos podéis moveros por toda la pantalla y cruzaros. Coger otra letra no pasa nada. Al completar la palabra se oye en voz alta, crece algo en el jardín y cambia el fondo.
+Los dos os movéis por toda la pantalla y podéis cruzaros.
 
-Palabras: SOFIA, XAVI, MARINA, PAULA y después palabras sencillas (SOL, OSO, LUNA, CASA...). Se cambian en `WORDS` al principio del código.
+- **Estrellas:** caen despacio. Cada una que cogéis rellena un gajo de la estrella grande de arriba (5 puntas y el centro). Al completarla, sonríe, brilla y sube al cielo. Las estrellas del cielo se van acumulando.
+- **Corazones:** de vez en cuando cae uno azul y uno rosa. Cada uno solo puede coger el suyo. Cuando los dos lo tenéis, viajáis a otro escenario: prado, playa, bosque, nieve, mar y espacio.
+
+No hay vidas ni fin de partida. Lo que no se coge se posa en el suelo y se apaga.
