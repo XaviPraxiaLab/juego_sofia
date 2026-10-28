@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Lluvia de estrellas</title>
+<title>Cielo de estrellas</title>
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #1b1b3a; font-family: "Comic Sans MS", "Chalkboard SE", system-ui, sans-serif; }
-  canvas { display: block; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #cfe8f3; font-family: "Comic Sans MS", "Chalkboard SE", system-ui, sans-serif; }
+  canvas { display: block; touch-action: none; user-select: none; }
 </style>
 </head>
 <body>
@@ -14,18 +14,24 @@
 <script>
 // ---------- Configuración ----------
 const PLAYERS = [
-  { name: 'Papá',  emoji: '🐻', keys: { left: 'KeyA', right: 'KeyD' }, labels: ['A', 'D'], color: '#4fc3f7', basket: 110, speed: 620 },
-  { name: 'Sofía', emoji: '🐰', keys: { left: 'ArrowLeft', right: 'ArrowRight' }, labels: ['←', '→'], color: '#ff80ab', basket: 150, speed: 560 },
+  { name: 'Papá',  emoji: '🐻', keys: { left: 'KeyA', right: 'KeyD' }, labels: ['A', 'D'], color: '#7fb7d9', heart: '#6fa8dc', basket: 120, speed: 380 },
+  { name: 'Sofía', emoji: '🐰', keys: { left: 'ArrowLeft', right: 'ArrowRight' }, labels: ['←', '→'], color: '#f2a7c3', heart: '#f48fb1', basket: 150, speed: 380 },
 ];
-const STARS_PER_LEVEL = 20;
-const MAX_LIVES = 5;
-const THEMES = [
-  { top: '#87ceeb', bottom: '#e0f7fa', name: 'Día' },
-  { top: '#ff9a76', bottom: '#ffe0b2', name: 'Atardecer' },
-  { top: '#3949ab', bottom: '#9fa8da', name: 'Noche' },
-  { top: '#0d0d2b', bottom: '#4a148c', name: 'Espacio' },
-  { top: '#00695c', bottom: '#a5d6a7', name: 'Bosque mágico' },
+const FALL_SPEED = 70;            // px/s, lento
+const SPAWN_EVERY = [1.8, 2.6];   // segundos entre estrellas
+const MAX_STARS = 3;              // estrellas cayendo a la vez
+const HEART_EVERY = [25, 35];     // segundos entre parejas de corazones
+const PIECE_COLORS = ['#ffd54f', '#ffb74d', '#f48fb1', '#ce93d8', '#81d4fa', '#a5d6a7'];
+// Escenarios: cambian cuando los dos cogéis vuestro corazón
+const SCENES = [
+  { name: 'El prado',     top: '#bfe0f0', bottom: '#f3f7e8', ground: '#b7dca0', deco: ['🌷', '🌼', '🌳', '🌻', '🐞', '🌸'], ambient: null },
+  { name: 'La playa',     top: '#9fd8ef', bottom: '#fff4d6', ground: '#f3dfa8', deco: ['🌴', '🐚', '🦀', '⛱️', '🐚', '🌴'], ambient: null },
+  { name: 'El bosque',    top: '#c4e3c8', bottom: '#eef6e6', ground: '#95c48c', deco: ['🌲', '🍄', '🦔', '🌲', '🐿️', '🌳'], ambient: 'leaf' },
+  { name: 'La nieve',     top: '#c7d8ea', bottom: '#f6f9fc', ground: '#ffffff', deco: ['⛄', '🌲', '🐧', '❄️', '🌲', '🦭'], ambient: 'snow' },
+  { name: 'El mar',       top: '#5fb3c9', bottom: '#a8e0e0', ground: '#e8d7a5', deco: ['🐠', '🐙', '🐢', '🪸', '🐟', '🐡'], ambient: 'bubble' },
+  { name: 'El espacio',   top: '#1f2a5c', bottom: '#5b4a8a', ground: '#9c8fc2', deco: ['🪐', '🚀', '👽', '🌙', '☄️', '🛸'], ambient: 'twinkle' },
 ];
+const SCALE = [523.25, 587.33, 659.25, 783.99, 880, 1046.5];
 
 const cv = document.getElementById('c');
 const ctx = cv.getContext('2d');
@@ -33,91 +39,97 @@ let W, H;
 function resize() { W = cv.width = innerWidth; H = cv.height = innerHeight; }
 addEventListener('resize', resize); resize();
 
-// ---------- Sonido ----------
+// ---------- Sonido suave ----------
 let ac;
-function tone(freq, dur = 0.12, type = 'sine', vol = 0.2, when = 0) {
+function startAudio() { if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch {} } }
+function tone(freq, dur = 0.5, vol = 0.12, when = 0) {
   if (!ac) return;
   const t = ac.currentTime + when;
   const o = ac.createOscillator(), g = ac.createGain();
-  o.type = type; o.frequency.setValueAtTime(freq, t);
-  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  o.type = 'sine'; o.frequency.setValueAtTime(freq, t);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   o.connect(g).connect(ac.destination); o.start(t); o.stop(t + dur);
 }
 const sfx = {
-  catch: c => tone(520 + Math.min(c, 15) * 40, 0.12, 'triangle'),
-  big: () => [660, 880, 1100].forEach((f, i) => tone(f, 0.15, 'triangle', 0.2, i * 0.07)),
-  hurt: () => { tone(180, 0.3, 'sawtooth', 0.15); tone(120, 0.35, 'sawtooth', 0.12, 0.08); },
-  level: () => [523, 659, 784, 1047, 1319].forEach((f, i) => tone(f, 0.2, 'square', 0.1, i * 0.1)),
-  friend: () => [784, 988, 1175, 1568].forEach((f, i) => tone(f, 0.18, 'sine', 0.25, i * 0.06)),
-  over: () => [523, 440, 349, 262].forEach((f, i) => tone(f, 0.3, 'triangle', 0.2, i * 0.2)),
+  piece: i => tone(SCALE[i % SCALE.length]),
+  star: () => [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone(f, 0.8, 0.1, i * 0.18)),
+  heart: () => tone(783.99, 0.7, 0.1),
+  scene: () => [659.25, 783.99, 987.77, 1318.5, 987.77, 1318.5].forEach((f, i) => tone(f, 0.9, 0.08, i * 0.2)),
 };
 
 // ---------- Estado ----------
 const keys = {};
-let state = 'menu'; // menu | play | pause | over
-let score, lives, level, jar, items, particles, floaters, shake, flash, friendTimer, record;
-try { record = +localStorage.getItem('lluvia-record') || 0; } catch { record = 0; }
+let state = 'menu'; // menu | play | pause
+let pieces, starColor, sky, items, particles, flyers, messages, spawnT, heartT, done, scene, sceneFrom, sceneMix, ambient;
 
 function reset() {
-  score = 0; lives = MAX_LIVES; level = 1; jar = 0; items = []; particles = []; floaters = []; shake = 0; flash = 0;
-  friendTimer = 12;
-  PLAYERS.forEach((p, i) => {
-    p.x = laneX(i) + laneW() / 2; p.combo = 0; p.spawn = 0.5 + i * 0.3; p.stun = 0; p.bounce = 0; p.friend = 0;
-  });
+  pieces = 0; starColor = 0; sky = []; items = []; particles = []; flyers = []; messages = []; ambient = [];
+  spawnT = 0.5; heartT = 20; done = 0; scene = 0; sceneFrom = 0; sceneMix = 1;
+  PLAYERS.forEach((p, i) => { p.x = W * (i ? 0.7 : 0.3); p.bounce = 0; p.hasHeart = false; });
 }
-const laneW = () => W / 2;
-const laneX = i => i * W / 2;
-const groundY = () => H - 70;
+const groundY = () => H - 80;
+const rand = (a, b) => a + Math.random() * (b - a);
+
+// ---------- Puzzle: estrella de 6 gajos (5 puntas + centro) ----------
+function puzzleGeom() {
+  const R = Math.min(70, H * 0.1), cx = W / 2, cy = R + 24, r = R * 0.45;
+  const outer = [], inner = [];
+  for (let k = 0; k < 5; k++) {
+    const a = -Math.PI / 2 + k * 2 * Math.PI / 5;
+    outer.push([cx + Math.cos(a) * R, cy + Math.sin(a) * R]);
+    const b = a + Math.PI / 5;
+    inner.push([cx + Math.cos(b) * r, cy + Math.sin(b) * r]);
+  }
+  // gajo k (0..4) = punta k; gajo 5 = centro
+  const polys = [];
+  for (let k = 0; k < 5; k++) polys.push([inner[(k + 4) % 5], outer[k], inner[k]]);
+  polys.push(inner);
+  return { cx, cy, R, polys };
+}
+const centroid = poly => poly.reduce((s, [x, y]) => [s[0] + x / poly.length, s[1] + y / poly.length], [0, 0]);
+function path(poly) { ctx.beginPath(); poly.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath(); }
 
 // ---------- Objetos que caen ----------
-// star +1, gold +3, rainbow +5, cloud -1 vida, friend (estrella amiga: aparece a la vez en los dos lados)
-function spawn(i, kind) {
-  const p = PLAYERS[i];
-  if (!kind) {
-    const r = Math.random();
-    const cloudChance = Math.min(0.08 + level * 0.03, 0.3) * (i === 1 ? 0.6 : 1); // Sofía recibe menos nubes
-    if (r < cloudChance) kind = 'cloud';
-    else if (r < cloudChance + 0.04) kind = 'rainbow';
-    else if (r < cloudChance + 0.16) kind = 'gold';
-    else kind = 'star';
-  }
-  const m = 40;
-  const base = 140 + level * 28;
-  items.push({
-    lane: i, kind,
-    x: laneX(i) + m + Math.random() * (laneW() - 2 * m),
-    y: -40,
-    vy: (base + Math.random() * 60) * (i === 1 ? 0.85 : 1) * (kind === 'cloud' ? 0.9 : 1),
-    rot: Math.random() * 6, wob: Math.random() * 6,
+function spawnStar() {
+  if (items.filter(it => it.kind === 'star' && !it.landed).length >= MAX_STARS) return;
+  const m = 60;
+  items.push({ kind: 'star', x0: m + Math.random() * (W - 2 * m), y: -40, t: Math.random() * 6, vy: FALL_SPEED * rand(0.9, 1.1), fade: 1 });
+}
+function spawnHearts() {
+  // un corazón de cada color; solo lo puede coger su dueño
+  PLAYERS.forEach((p, i) => {
+    const x = W * (i ? rand(0.55, 0.9) : rand(0.1, 0.45));
+    items.push({ kind: 'heart', owner: i, x0: x, y: -40, t: Math.random() * 6, vy: FALL_SPEED * 0.85, fade: 1 });
   });
 }
-
-function burst(x, y, color, n = 14, power = 260) {
+function sparkle(x, y, color, n = 6) {
   for (let k = 0; k < n; k++) {
-    const a = Math.random() * Math.PI * 2, s = Math.random() * power;
-    particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 120, life: 0.8 + Math.random() * 0.4, color, size: 4 + Math.random() * 5 });
+    const a = Math.random() * Math.PI * 2, s = rand(30, 90);
+    particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 1, color, size: rand(2, 4) });
   }
 }
-function confetti() {
-  const cols = ['#ff5252', '#ffd740', '#69f0ae', '#40c4ff', '#e040fb', '#ff80ab'];
-  for (let k = 0; k < 120; k++) particles.push({ x: Math.random() * W, y: -20 - Math.random() * 200, vx: (Math.random() - 0.5) * 120, vy: 100 + Math.random() * 200, life: 2.5, color: cols[k % cols.length], size: 6 + Math.random() * 6, confetti: true, rot: Math.random() * 6 });
-}
-function floater(x, y, text, color = '#fff', size = 34) { floaters.push({ x, y, text, color, size, life: 1 }); }
+function say(text) { messages = [{ text, life: 3.5 }]; }
 
-function addStars(n, x, y, p) {
-  const mult = 1 + Math.floor(p.combo / 10);
-  score += n * mult;
-  jar += n;
-  floater(x, y - 30, '+' + n * mult + (mult > 1 ? ' ×' + mult : ''), '#fff');
-  if (jar >= STARS_PER_LEVEL) levelUp();
+function starDone() {
+  sfx.star();
+  const g = puzzleGeom();
+  sparkle(g.cx, g.cy, '#fff59d', 14);
+  done = 2.5; // la estrella brilla un momento y sube al cielo
 }
-
-function levelUp() {
-  jar -= STARS_PER_LEVEL; level++;
-  if (lives < MAX_LIVES) lives++;
-  sfx.level(); confetti(); flash = 1;
-  floater(W / 2, H / 2 - 40, '¡Nivel ' + level + '!', '#ffd740', 80);
-  floater(W / 2, H / 2 + 30, THEMES[(level - 1) % THEMES.length].name, '#fff', 40);
+function sendStarToSky() {
+  // posiciones repartidas por el cielo, lejos del puzzle y del suelo
+  let x, y, tries = 0;
+  do { x = rand(0.04, 0.96); y = rand(0.05, 0.26); tries++; }
+  while (tries < 40 && (Math.abs(x - 0.5) < 0.1 || x < 0.1 && y < 0.1 || sky.some(s => Math.hypot(s.x - x, s.y - y) < 0.06)));
+  const g = puzzleGeom();
+  sky.push({ x, y, color: PIECE_COLORS[starColor % PIECE_COLORS.length], fx: g.cx, fy: g.cy, t: 0 });
+  starColor++; pieces = 0;
+}
+function changeScene() {
+  sfx.scene();
+  sceneFrom = scene; scene = (scene + 1) % SCENES.length; sceneMix = 0;
+  say(SCENES[scene].name);
+  PLAYERS.forEach(p => { p.hasHeart = false; });
 }
 
 // ---------- Bucle ----------
@@ -125,249 +137,290 @@ let last = performance.now();
 function loop(now) {
   const dt = Math.min((now - last) / 1000, 0.05); last = now;
   if (state === 'play') update(dt);
-  updateFx(dt);
   draw(now / 1000);
   requestAnimationFrame(loop);
 }
 
 function update(dt) {
-  PLAYERS.forEach((p, i) => {
-    p.stun = Math.max(0, p.stun - dt);
-    p.bounce = Math.max(0, p.bounce - dt * 4);
-    p.friend = Math.max(0, p.friend - dt);
+  PLAYERS.forEach(p => {
+    p.bounce = Math.max(0, p.bounce - dt * 3);
     const dir = (keys[p.keys.right] ? 1 : 0) - (keys[p.keys.left] ? 1 : 0);
-    const sp = p.stun > 0 ? p.speed * 0.4 : p.speed;
-    p.x += dir * sp * dt;
-    const half = p.basket / 2;
-    p.x = Math.max(laneX(i) + half, Math.min(laneX(i) + laneW() - half, p.x));
-    p.spawn -= dt;
-    if (p.spawn <= 0) { spawn(i); p.spawn = Math.max(0.35, 1.1 - level * 0.07) * (i === 1 ? 1.15 : 1) * (0.7 + Math.random() * 0.6); }
+    p.x += dir * p.speed * dt;
+    p.x = Math.max(p.basket / 2, Math.min(W - p.basket / 2, p.x)); // toda la pantalla, os podéis cruzar
   });
 
-  friendTimer -= dt;
-  if (friendTimer <= 0) { spawn(0, 'friend'); spawn(1, 'friend'); friendTimer = 14 + Math.random() * 8; }
+  sceneMix = Math.min(1, sceneMix + dt / 3);
 
+  if (done > 0) { done -= dt; if (done <= 0) sendStarToSky(); }
+  spawnT -= dt;
+  if (spawnT <= 0) { spawnStar(); spawnT = rand(...SPAWN_EVERY); }
+  heartT -= dt;
+  if (heartT <= 0 && !items.some(it => it.kind === 'heart')) { spawnHearts(); heartT = rand(...HEART_EVERY); }
+
+  const gy = groundY();
   for (let k = items.length - 1; k >= 0; k--) {
     const it = items[k];
-    it.y += it.vy * dt; it.rot += dt * 2; it.wob += dt * 3;
-    const p = PLAYERS[it.lane];
-    const gy = groundY();
-    if (it.y > gy - 40 && it.y < gy + 10 && Math.abs(it.x - p.x) < p.basket / 2 + 10) {
-      items.splice(k, 1);
-      onCatch(it, p);
+    it.t += dt;
+    it.x = it.x0 + Math.sin(it.t * 1.2) * 16;
+    if (it.landed) {
+      it.fade -= dt * 0.6;
+      if (it.fade <= 0) { items.splice(k, 1); if (it.kind === 'heart') heartLost(); }
       continue;
     }
-    if (it.y > H + 40) {
-      items.splice(k, 1);
-      if (it.kind !== 'cloud') p.combo = 0;
+    it.y += it.vy * dt;
+    const p = PLAYERS.find((p, i) => (it.kind !== 'heart' || it.owner === i) && it.y > gy - 45 && it.y < gy && Math.abs(it.x - p.x) < p.basket / 2 + 12);
+    if (p) { items.splice(k, 1); onCatch(it, p); continue; }
+    if (it.y >= gy + 6) { it.y = gy + 6; it.landed = true; }
+  }
+
+  for (let k = flyers.length - 1; k >= 0; k--) {
+    const f = flyers[k]; f.t += dt / 0.9;
+    if (f.t >= 1) {
+      flyers.splice(k, 1); pieces++;
+      const g = puzzleGeom(), [cx, cy] = centroid(g.polys[f.piece]);
+      sparkle(cx, cy, '#fff3b0'); sfx.piece(f.piece);
+      if (pieces === 6) starDone();
     }
   }
+  sky.forEach(s => { s.t = Math.min(1, s.t + dt / 1.5); });
+
+  // ambiente del escenario: nieve, burbujas, hojas o destellos, muy pocos
+  const amb = SCENES[scene].ambient;
+  if (amb && ambient.length < 14 && Math.random() < dt * 1.5) {
+    ambient.push({ kind: amb, x: Math.random() * W, y: amb === 'bubble' ? H : (amb === 'twinkle' ? Math.random() * H * 0.7 : -10), t: 0, life: 8 });
+  }
+  ambient.forEach(a => {
+    a.t += dt; a.life -= dt;
+    if (a.kind === 'snow' || a.kind === 'leaf') { a.y += 30 * dt; a.x += Math.sin(a.t) * 15 * dt; }
+    if (a.kind === 'bubble') { a.y -= 35 * dt; a.x += Math.sin(a.t * 2) * 10 * dt; }
+  });
+  ambient = ambient.filter(a => a.life > 0 && a.y < H + 20 && a.y > -20 && a.kind === amb);
+
+  for (let k = particles.length - 1; k >= 0; k--) {
+    const q = particles[k]; q.x += q.vx * dt; q.y += q.vy * dt; q.vx *= 0.96; q.vy *= 0.96; q.life -= dt * 0.9;
+    if (q.life <= 0) particles.splice(k, 1);
+  }
+  messages.forEach(m => { m.life -= dt; });
+  messages = messages.filter(m => m.life > 0);
 }
 
 function onCatch(it, p) {
   p.bounce = 1;
-  if (it.kind === 'cloud') {
-    lives--; p.combo = 0; p.stun = 1; shake = 0.4; sfx.hurt();
-    burst(it.x, it.y, '#78909c', 20);
-    floater(it.x, it.y - 30, '¡Uy!', '#ff5252');
-    if (lives <= 0) gameOver();
+  if (it.kind === 'star') {
+    sparkle(it.x, it.y, '#fff3b0');
+    const piece = pieces + flyers.length;
+    if (piece < 6 && done <= 0) flyers.push({ x: it.x, y: it.y, t: 0, piece });
+    else sfx.piece(3);
     return;
   }
-  p.combo++;
-  if (it.kind === 'star')    { sfx.catch(p.combo); burst(it.x, it.y, '#ffeb3b'); addStars(1, it.x, it.y, p); }
-  if (it.kind === 'gold')    { sfx.big(); burst(it.x, it.y, '#ffa000', 22); addStars(3, it.x, it.y, p); }
-  if (it.kind === 'rainbow') { sfx.big(); burst(it.x, it.y, '#e040fb', 30, 340); addStars(5, it.x, it.y, p); }
-  if (it.kind === 'friend') {
-    sfx.catch(p.combo); p.friend = 3;
-    burst(it.x, it.y, '#ff80ab', 20);
-    const other = PLAYERS[1 - PLAYERS.indexOf(p)];
-    if (other.friend > 0) {
-      p.friend = other.friend = 0;
-      sfx.friend(); confetti();
-      floater(W / 2, H / 2, '¡Chócala! +10', '#ff80ab', 70);
-      addStars(10, W / 2, H / 2 + 60, { combo: 0 });
-    } else {
-      floater(it.x, it.y - 30, '¡Ahora tú!', '#ff80ab', 30);
-    }
-  }
-  if (p.combo > 0 && p.combo % 10 === 0) floater(p.x, groundY() - 120, '¡Racha ' + p.combo + '!', p.color, 40);
+  sfx.heart(); sparkle(it.x, it.y, p.heart, 8);
+  p.hasHeart = true;
+  const other = PLAYERS[1 - PLAYERS.indexOf(p)];
+  if (other.hasHeart) changeScene();
+  else say('¡Ahora ' + other.name + '!');
 }
-
-function gameOver() {
-  state = 'over'; sfx.over();
-  if (score > record) { record = score; try { localStorage.setItem('lluvia-record', record); } catch {} }
-}
-
-function updateFx(dt) {
-  shake = Math.max(0, shake - dt); flash = Math.max(0, flash - dt * 1.5);
-  for (let k = particles.length - 1; k >= 0; k--) {
-    const q = particles[k];
-    q.x += q.vx * dt; q.y += q.vy * dt; q.life -= dt;
-    if (q.confetti) { q.rot += dt * 6; q.vx += Math.sin(q.y / 30) * 4; } else q.vy += 500 * dt;
-    if (q.life <= 0 || q.y > H + 30) particles.splice(k, 1);
-  }
-  for (let k = floaters.length - 1; k >= 0; k--) {
-    const f = floaters[k]; f.y -= 50 * dt; f.life -= dt * 0.8;
-    if (f.life <= 0) floaters.splice(k, 1);
-  }
+function heartLost() {
+  // si se escapa un corazón, no pasa nada: se espera a la próxima pareja
+  if (!items.some(it => it.kind === 'heart')) PLAYERS.forEach(p => { p.hasHeart = false; });
 }
 
 // ---------- Dibujo ----------
-function starPath(x, y, r, rot) {
+function starPath(x, y, r) {
   ctx.beginPath();
   for (let k = 0; k < 10; k++) {
-    const a = rot + k * Math.PI / 5 - Math.PI / 2, rr = k % 2 ? r * 0.45 : r;
+    const a = k * Math.PI / 5 - Math.PI / 2, rr = k % 2 ? r * 0.45 : r;
     ctx.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr);
   }
   ctx.closePath();
 }
-
-function drawItem(it, t) {
-  const { x, y } = it;
-  ctx.save();
-  if (it.kind === 'star' || it.kind === 'gold') {
-    const r = it.kind === 'gold' ? 30 : 24;
-    ctx.shadowColor = it.kind === 'gold' ? '#ffa000' : '#fff59d'; ctx.shadowBlur = 20;
-    starPath(x, y, r, Math.sin(it.rot) * 0.3);
-    ctx.fillStyle = it.kind === 'gold' ? '#ffb300' : '#ffeb3b'; ctx.fill();
-    ctx.lineWidth = 3; ctx.strokeStyle = '#f57f17'; ctx.stroke();
-    ctx.shadowBlur = 0; ctx.fillStyle = '#5d4037';
-    ctx.beginPath(); ctx.arc(x - 6, y - 2, 2.5, 0, 7); ctx.arc(x + 6, y - 2, 2.5, 0, 7); ctx.fill();
-    ctx.beginPath(); ctx.arc(x, y + 3, 5, 0.2, Math.PI - 0.2); ctx.stroke();
-  } else if (it.kind === 'rainbow') {
-    const cols = ['#f44336', '#ff9800', '#ffeb3b', '#4caf50', '#2196f3', '#9c27b0'];
-    ctx.lineWidth = 6;
-    cols.forEach((c, k) => { ctx.strokeStyle = c; ctx.beginPath(); ctx.arc(x, y + 12, 36 - k * 6, Math.PI, 0); ctx.stroke(); });
-  } else if (it.kind === 'friend') {
-    const s = 1 + Math.sin(t * 8) * 0.1;
-    ctx.translate(x, y); ctx.scale(s, s);
-    ctx.shadowColor = '#ff4081'; ctx.shadowBlur = 25; ctx.fillStyle = '#ff4081';
-    ctx.beginPath(); ctx.moveTo(0, 12);
-    ctx.bezierCurveTo(-34, -10, -16, -34, 0, -16); ctx.bezierCurveTo(16, -34, 34, -10, 0, 12); ctx.fill();
-  } else if (it.kind === 'cloud') {
-    ctx.fillStyle = '#546e7a';
-    [[-20, 0, 20], [0, -10, 24], [22, 0, 18], [0, 8, 20]].forEach(([dx, dy, r]) => { ctx.beginPath(); ctx.arc(x + dx, y + dy, r, 0, 7); ctx.fill(); });
-    ctx.fillStyle = '#ffeb3b';
-    ctx.beginPath(); ctx.moveTo(x - 4, y + 18); ctx.lineTo(x + 8, y + 18); ctx.lineTo(x, y + 30); ctx.lineTo(x + 10, y + 30); ctx.lineTo(x - 8, y + 50); ctx.lineTo(x - 2, y + 32); ctx.lineTo(x - 10, y + 32); ctx.closePath(); ctx.fill();
-    ctx.fillStyle = '#fff';
-    ctx.beginPath(); ctx.arc(x - 9, y - 4, 4, 0, 7); ctx.arc(x + 9, y - 4, 4, 0, 7); ctx.fill();
+function drawStar(x, y, r, alpha = 1, color = '#ffe58a', face = true) {
+  ctx.save(); ctx.globalAlpha = alpha;
+  starPath(x, y, r);
+  ctx.fillStyle = color; ctx.fill();
+  ctx.lineJoin = 'round'; ctx.lineWidth = Math.max(1.5, r / 8); ctx.strokeStyle = '#e8b64c'; ctx.stroke();
+  if (face) {
+    ctx.fillStyle = '#6d5040';
+    ctx.beginPath(); ctx.arc(x - r * 0.25, y - r * 0.05, r * 0.09, 0, 7); ctx.arc(x + r * 0.25, y - r * 0.05, r * 0.09, 0, 7); ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = '#6d5040';
+    ctx.beginPath(); ctx.arc(x, y + r * 0.08, r * 0.2, 0.3, Math.PI - 0.3); ctx.stroke();
   }
   ctx.restore();
 }
+function drawHeart(x, y, color, alpha = 1, s = 1) {
+  ctx.save(); ctx.globalAlpha = alpha; ctx.translate(x, y); ctx.scale(s, s);
+  ctx.fillStyle = color;
+  ctx.beginPath(); ctx.moveTo(0, 14);
+  ctx.bezierCurveTo(-34, -8, -16, -32, 0, -14); ctx.bezierCurveTo(16, -32, 34, -8, 0, 14); ctx.fill();
+  ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.stroke();
+  ctx.restore();
+}
 
-function drawPlayer(p, i, t) {
-  const gy = groundY();
-  const squash = 1 + p.bounce * 0.15;
+function drawPuzzle(t) {
+  const g = puzzleGeom();
+  const color = PIECE_COLORS[starColor % PIECE_COLORS.length];
+  const glow = done > 0;
   ctx.save();
-  ctx.translate(p.x, gy);
-  if (p.stun > 0 && Math.floor(t * 12) % 2) ctx.globalAlpha = 0.5;
-  // cesta
-  ctx.fillStyle = p.color; ctx.strokeStyle = '#5d4037'; ctx.lineWidth = 4;
+  if (glow) { ctx.shadowColor = '#fff59d'; ctx.shadowBlur = 30 + Math.sin(t * 6) * 10; }
+  g.polys.forEach((poly, k) => {
+    path(poly);
+    if (k < pieces) { ctx.fillStyle = color; ctx.fill(); }
+    else { ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fill(); }
+  });
+  ctx.restore();
+  ctx.lineJoin = 'round';
+  g.polys.forEach((poly, k) => {
+    path(poly);
+    ctx.setLineDash(k < pieces ? [] : [6, 6]);
+    ctx.lineWidth = 3; ctx.strokeStyle = k < pieces ? '#e8b64c' : 'rgba(255,255,255,0.9)'; ctx.stroke();
+  });
+  ctx.setLineDash([]);
+  // el siguiente gajo parpadea suavemente
+  const next = pieces + flyers.length;
+  if (next < 6 && !glow) {
+    path(g.polys[next]);
+    ctx.fillStyle = `rgba(255,255,255,${0.25 + Math.sin(t * 3) * 0.2})`; ctx.fill();
+  }
+  if (glow) {
+    const s = g.R * 0.45;
+    ctx.fillStyle = '#6d5040';
+    ctx.beginPath(); ctx.arc(g.cx - s * 0.35, g.cy - s * 0.1, 3.5, 0, 7); ctx.arc(g.cx + s * 0.35, g.cy - s * 0.1, 3.5, 0, 7); ctx.fill();
+    ctx.lineWidth = 2.5; ctx.strokeStyle = '#6d5040';
+    ctx.beginPath(); ctx.arc(g.cx, g.cy + s * 0.1, s * 0.3, 0.3, Math.PI - 0.3); ctx.stroke();
+  }
+}
+
+function drawSky(t) {
+  sky.forEach((s, k) => {
+    const e = 1 - Math.pow(1 - s.t, 3);
+    const x = s.fx + (s.x * W - s.fx) * e, y = s.fy + (s.y * H - s.fy) * e;
+    const r = 60 - 46 * e + Math.sin(t * 2 + k) * 1.5;
+    ctx.save(); ctx.shadowColor = '#fffde7'; ctx.shadowBlur = 18;
+    drawStar(x, y, r, 1, s.color, false);
+    ctx.restore();
+  });
+}
+
+function drawPlayer(p) {
+  const gy = groundY();
+  const squash = 1 + p.bounce * 0.08;
+  ctx.save(); ctx.translate(p.x, gy);
+  ctx.globalAlpha = 0.92;
+  ctx.fillStyle = p.color; ctx.strokeStyle = '#8d6e63'; ctx.lineWidth = 3; ctx.lineJoin = 'round';
   const bw = p.basket;
-  ctx.beginPath(); ctx.moveTo(-bw / 2, -30); ctx.lineTo(bw / 2, -30); ctx.lineTo(bw / 2 - 14, 10); ctx.lineTo(-bw / 2 + 14, 10); ctx.closePath(); ctx.fill(); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(-bw / 2 + 6, -15); ctx.lineTo(bw / 2 - 6, -15); ctx.stroke();
-  // personaje
+  ctx.beginPath(); ctx.moveTo(-bw / 2, -30); ctx.lineTo(bw / 2, -30); ctx.lineTo(bw / 2 - 14, 8); ctx.lineTo(-bw / 2 + 14, 8); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.globalAlpha = 1;
   ctx.scale(1 / squash, squash);
-  ctx.font = '64px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  ctx.font = '60px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
   ctx.fillText(p.emoji, 0, -22);
   ctx.restore();
-  // brillo de "estrella amiga" esperando
-  if (p.friend > 0) {
-    ctx.fillStyle = '#ff4081'; ctx.font = 'bold 28px sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText('💖 ' + Math.ceil(p.friend), p.x, gy - 100);
-  }
-}
-
-function drawKeyHint(i) {
-  const p = PLAYERS[i];
-  const cx = laneX(i) + laneW() / 2, y = H - 30;
-  ctx.font = 'bold 22px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  [-1, 1].forEach((d, k) => {
-    const bx = cx + d * 34;
-    const pressed = keys[k ? p.keys.right : p.keys.left];
-    ctx.fillStyle = pressed ? p.color : 'rgba(255,255,255,0.85)';
-    roundRect(bx - 22, y - 20, 44, 40, 8); ctx.fill();
-    ctx.fillStyle = '#333'; ctx.fillText(p.labels[k], bx, y + 1);
-  });
+  if (p.hasHeart) drawHeart(p.x + bw / 2 - 10, gy - 70, p.heart, 1, 0.6);
 }
 
 function roundRect(x, y, w, h, r) {
   ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
 }
-
-function text(s, x, y, size, color = '#fff', align = 'center') {
+function text(s, x, y, size, color = '#5b4a6b', align = 'center') {
   ctx.font = `bold ${size}px "Comic Sans MS", "Chalkboard SE", sans-serif`;
   ctx.textAlign = align; ctx.textBaseline = 'middle';
-  ctx.lineJoin = "round"; ctx.lineWidth = size / 6; ctx.strokeStyle = 'rgba(0,0,0,0.45)'; ctx.strokeText(s, x, y);
+  ctx.lineJoin = 'round'; ctx.lineWidth = size / 5; ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.strokeText(s, x, y);
   ctx.fillStyle = color; ctx.fillText(s, x, y);
 }
 
-function drawHUD() {
-  text('⭐ ' + score, 20, 36, 34, '#ffeb3b', 'left');
-  text('❤️'.repeat(Math.max(0, lives)) + '🤍'.repeat(MAX_LIVES - Math.max(0, lives)), W - 20, 36, 28, '#fff', 'right');
-  // tarro de nivel
-  const jw = Math.min(360, W * 0.4), jx = W / 2 - jw / 2, jy = 20;
-  ctx.fillStyle = 'rgba(0,0,0,0.3)'; roundRect(jx, jy, jw, 30, 15); ctx.fill();
-  ctx.fillStyle = '#ffd740'; roundRect(jx, jy, Math.max(30, jw * jar / STARS_PER_LEVEL), 30, 15); ctx.fill();
-  text('Nivel ' + level, W / 2, jy + 16, 20);
-  PLAYERS.forEach((p, i) => { if (p.combo >= 3) text('racha ' + p.combo, laneX(i) + laneW() / 2, 80, 22, p.color); });
+function drawKeyHint(i) {
+  const p = PLAYERS[i];
+  const cx = W * (i ? 0.75 : 0.25), y = H - 30;
+  ctx.font = 'bold 22px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  [-1, 1].forEach((d, k) => {
+    const bx = cx + d * 34;
+    ctx.fillStyle = keys[k ? p.keys.right : p.keys.left] ? p.color : 'rgba(255,255,255,0.85)';
+    roundRect(bx - 22, y - 20, 44, 40, 10); ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = p.color; ctx.stroke();
+    ctx.fillStyle = '#5b4a6b'; ctx.fillText(p.labels[k], bx, y + 1);
+  });
+}
+
+function lerpColor(a, b, m) {
+  const pa = [1, 3, 5].map(i => parseInt(a.slice(i, i + 2), 16)), pb = [1, 3, 5].map(i => parseInt(b.slice(i, i + 2), 16));
+  return 'rgb(' + pa.map((v, i) => Math.round(v + (pb[i] - v) * m)).join(',') + ')';
+}
+
+function drawScene(sc, alpha, t) {
+  ctx.save(); ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  const gy = groundY();
+  sc.deco.forEach((e, k) => {
+    const x = W * [0.05, 0.13, 0.42, 0.58, 0.87, 0.95][k]; // repartidos sin tapar los botones
+    ctx.font = (k % 2 ? 34 : 46) + 'px serif';
+    ctx.fillText(e, x, gy + 40 + Math.sin(t * 1.2 + k) * 1.5);
+  });
+  ctx.restore();
 }
 
 function draw(t) {
-  const th = THEMES[(((level || 1) - 1) % THEMES.length)];
+  const A = SCENES[sceneFrom || 0], B = SCENES[scene || 0], m = sceneMix ?? 1;
   const g = ctx.createLinearGradient(0, 0, 0, H);
-  g.addColorStop(0, th.top); g.addColorStop(1, th.bottom);
+  g.addColorStop(0, lerpColor(A.top, B.top, m)); g.addColorStop(1, lerpColor(A.bottom, B.bottom, m));
   ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
 
-  ctx.save();
-  if (shake > 0) ctx.translate((Math.random() - 0.5) * 20 * shake, (Math.random() - 0.5) * 20 * shake);
+  // nubes de fondo, muy lentas (menos visibles en el espacio y bajo el mar)
+  const cloudAlpha = 0.6 * (1 - (scene >= 4 ? m : 0) - (sceneFrom >= 4 && scene < 4 ? 1 - m : 0));
+  if (cloudAlpha > 0.01) {
+    ctx.fillStyle = `rgba(255,255,255,${cloudAlpha})`;
+    [[0.15, 0.35, 1], [0.6, 0.25, 0.8], [0.85, 0.45, 1.1]].forEach(([fx, fy, s], k) => {
+      const x = ((fx * W + t * (6 + k * 2)) % (W + 200)) - 100, y = fy * H;
+      [[-30, 0, 26], [0, -12, 32], [30, 0, 24]].forEach(([dx, dy, r]) => { ctx.beginPath(); ctx.arc(x + dx * s, y + dy * s, r * s, 0, 7); ctx.fill(); });
+    });
+  }
 
-  // suelo y separador
-  ctx.fillStyle = 'rgba(76,175,80,0.85)'; ctx.fillRect(0, groundY() + 10, W, H);
-  ctx.setLineDash([14, 12]); ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 4;
-  ctx.beginPath(); ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, H); ctx.stroke(); ctx.setLineDash([]);
+  ambient && ambient.forEach(a => {
+    const al = Math.min(1, a.life / 2) * 0.8;
+    ctx.fillStyle = a.kind === 'leaf' ? `rgba(160,190,90,${al})` : `rgba(255,255,255,${al})`;
+    if (a.kind === 'twinkle') { drawStar(a.x, a.y, 4 + Math.sin(a.t * 3) * 2, al, '#fffde7', false); return; }
+    if (a.kind === 'bubble') { ctx.strokeStyle = `rgba(255,255,255,${al})`; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(a.x, a.y, 7, 0, 7); ctx.stroke(); return; }
+    ctx.beginPath(); ctx.arc(a.x, a.y, a.kind === 'leaf' ? 5 : 4, 0, 7); ctx.fill();
+  });
+
+  // suelo
+  const gy = groundY();
+  ctx.fillStyle = lerpColor(A.ground, B.ground, m);
+  ctx.beginPath(); ctx.moveTo(0, gy + 10);
+  for (let x = 0; x <= W; x += 20) ctx.lineTo(x, gy + 10 + Math.sin(x / 120) * 6);
+  ctx.lineTo(W, H); ctx.lineTo(0, H); ctx.closePath(); ctx.fill();
 
   if (state !== 'menu') {
-    items.forEach(it => drawItem(it, t));
-    PLAYERS.forEach((p, i) => drawPlayer(p, i, t));
+    if (m < 1) drawScene(A, 1 - m, t);
+    drawScene(B, m, t);
+    drawSky(t);
+    items.forEach(it => it.kind === 'star' ? drawStar(it.x, it.y, 24, it.fade) : drawHeart(it.x, it.y, PLAYERS[it.owner].heart, it.fade));
+    PLAYERS.forEach(drawPlayer);
+    drawPuzzle(t);
+    flyers.forEach(f => {
+      const [tx, ty] = centroid(puzzleGeom().polys[f.piece]), e = 1 - Math.pow(1 - f.t, 3);
+      drawStar(f.x + (tx - f.x) * e, f.y + (ty - f.y) * e - Math.sin(e * Math.PI) * 60, 24 - e * 12);
+    });
+    particles.forEach(q => { ctx.globalAlpha = Math.max(0, q.life); ctx.fillStyle = q.color; ctx.beginPath(); ctx.arc(q.x, q.y, q.size, 0, 7); ctx.fill(); });
+    ctx.globalAlpha = 1;
+    text('⭐ ' + sky.length, 20, 40, 26, '#5b4a6b', 'left');
+    messages.forEach(mm => { ctx.globalAlpha = Math.min(1, mm.life); text(mm.text, W / 2, H * 0.4, 44, '#d16a93'); ctx.globalAlpha = 1; });
   }
-  ctx.restore();
-
-  particles.forEach(q => {
-    ctx.globalAlpha = Math.min(1, q.life * 2); ctx.fillStyle = q.color;
-    if (q.confetti) { ctx.save(); ctx.translate(q.x, q.y); ctx.rotate(q.rot); ctx.fillRect(-q.size / 2, -q.size / 4, q.size, q.size / 2); ctx.restore(); }
-    else { ctx.beginPath(); ctx.arc(q.x, q.y, q.size, 0, 7); ctx.fill(); }
-  });
-  ctx.globalAlpha = 1;
-  floaters.forEach(f => { ctx.globalAlpha = Math.min(1, f.life * 2); text(f.text, f.x, f.y, f.size, f.color); });
-  ctx.globalAlpha = 1;
-  if (flash > 0) { ctx.fillStyle = `rgba(255,255,255,${flash * 0.4})`; ctx.fillRect(0, 0, W, H); }
 
   PLAYERS.forEach((p, i) => drawKeyHint(i));
 
-  if (state === 'play' || state === 'pause') drawHUD();
-
   if (state === 'menu') {
-    text('Lluvia de estrellas', W / 2, H * 0.22, Math.min(72, W / 11), '#ffd740');
+    text('Cielo de estrellas', W / 2, H * 0.18, Math.min(64, W / 12), '#e0a32e');
     PLAYERS.forEach((p, i) => {
-      const cx = laneX(i) + laneW() / 2;
-      ctx.font = '90px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(p.emoji, cx, H * 0.45);
-      text(p.name, cx, H * 0.58, 40, p.color);
-      text(p.labels.join('  '), cx, H * 0.66, 34);
+      const cx = W * (i ? 0.75 : 0.25);
+      ctx.font = '84px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(p.emoji, cx, H * 0.38);
+      text(p.name, cx, H * 0.5, 36, p.color);
+      text(p.labels.join('  '), cx, H * 0.57, 30);
+      drawHeart(cx, H * 0.65, p.heart, 1, 0.8);
     });
-    text('Atrapad estrellas ⭐   ¡Cuidado con las nubes!', W / 2, H * 0.76, Math.min(30, W / 28));
-    if (Math.floor(t * 2) % 2) text('Pulsa ESPACIO para empezar', W / 2, H * 0.85, Math.min(36, W / 22), '#fff');
-    if (record) text('Récord: ' + record, W / 2, H * 0.92 - 40, 24, '#ffeb3b');
+    text('Juntad estrellas para montar la estrella grande', W / 2, H * 0.74, Math.min(24, W / 32));
+    text('Cada uno coge su corazón para viajar a otro sitio', W / 2, H * 0.79, Math.min(24, W / 32));
+    text('Pulsa ESPACIO o toca para empezar', W / 2, H * 0.86, Math.min(30, W / 26), '#5b4a6b');
   }
-  if (state === 'pause') text('Pausa (ESPACIO para seguir)', W / 2, H / 2, 48);
-  if (state === 'over') {
-    ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(0, 0, W, H);
-    text('¡Muy bien, equipo!', W / 2, H * 0.3, 64, '#ffd740');
-    text('⭐ ' + score + '   ·   Nivel ' + level, W / 2, H * 0.45, 48);
-    text(score >= record ? '¡Nuevo récord!' : 'Récord: ' + record, W / 2, H * 0.55, 36, '#ff80ab');
-    if (Math.floor(t * 2) % 2) text('ESPACIO para jugar otra vez', W / 2, H * 0.7, 36);
-  }
+  if (state === 'pause') text('Pausa · ESPACIO para seguir', W / 2, H / 2, 40);
 }
 
 // ---------- Teclado ----------
@@ -375,14 +428,38 @@ const gameKeys = new Set(['Space', ...PLAYERS.flatMap(p => [p.keys.left, p.keys.
 addEventListener('keydown', e => {
   if (gameKeys.has(e.code)) e.preventDefault();
   keys[e.code] = true;
-  if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch {} }
+  startAudio();
   if (e.code === 'Space' && !e.repeat) {
-    if (state === 'menu' || state === 'over') { reset(); state = 'play'; }
+    if (state === 'menu') { reset(); state = 'play'; }
     else if (state === 'play') state = 'pause';
     else if (state === 'pause') { state = 'play'; last = performance.now(); }
   }
 });
 addEventListener('keyup', e => { keys[e.code] = false; });
+
+// ---------- Táctil / ratón: los botones de abajo también funcionan ----------
+const pointers = new Map();
+function buttonAt(x, y) {
+  if (y < H - 80) return null;
+  for (let i = 0; i < PLAYERS.length; i++) {
+    const cx = W * (i ? 0.75 : 0.25);
+    if (Math.abs(x - (cx - 34)) < 34) return PLAYERS[i].keys.left;
+    if (Math.abs(x - (cx + 34)) < 34) return PLAYERS[i].keys.right;
+  }
+  return null;
+}
+function syncPointerKeys() {
+  PLAYERS.forEach(p => { keys[p.keys.left] = keys[p.keys.right] = false; });
+  pointers.forEach(k => { if (k) keys[k] = true; });
+}
+cv.addEventListener('pointerdown', e => {
+  e.preventDefault(); startAudio(); window.focus();
+  if (state === 'menu') { reset(); state = 'play'; return; }
+  if (state === 'pause') { state = 'play'; last = performance.now(); }
+  pointers.set(e.pointerId, buttonAt(e.clientX, e.clientY)); syncPointerKeys();
+});
+cv.addEventListener('pointermove', e => { if (pointers.has(e.pointerId)) { pointers.set(e.pointerId, buttonAt(e.clientX, e.clientY)); syncPointerKeys(); } });
+['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => cv.addEventListener(ev, e => { pointers.delete(e.pointerId); syncPointerKeys(); }));
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; if (state === 'play') state = 'pause'; });
 
 reset();
